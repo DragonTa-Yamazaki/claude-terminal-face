@@ -29,9 +29,47 @@ suite. There is nothing to `npm install` or `npm run build`.
   `gl_FragCoord` uses the opposite convention and will hide orientation bugs. Re-select the same
   file after editing it to recompile.
 
-There's no automated way to verify the GLSL against real Ghostty rendering; changes affecting
-layout/orientation/timing should be sanity-checked with `misc/shader-preview.html` and, when possible,
-called out to the user for a real-Ghostty check.
+### Compile-checking the GLSL with glslang (required before calling a shader change done)
+
+Ghostty compiles custom shaders with glslang, not with the browser's WebGL2 compiler, so
+`misc/shader-preview.html` saying "compiled OK" is NOT sufficient: the harness silently keeps
+rendering the previous program if you re-select the same filename (the file input fires no
+change event), and its stale "compiled OK" once masked a use-before-declaration bug that made
+the face vanish in real Ghostty. Always validate with the real compiler
+(`brew install glslang`, already installed on this machine):
+
+```sh
+cd "$(mktemp -d)"
+cat > header.glsl <<'EOF'
+#version 430 core
+layout(binding = 0) uniform sampler2D iChannel0;
+layout(binding = 1) uniform Globals {
+    uniform vec3 iResolution;
+    uniform float iTime;
+    uniform float iTimeDelta;
+    uniform float iFrameRate;
+    uniform int iFrame;
+    uniform vec4 iMouse;
+    uniform vec4 iDate;
+    uniform vec4 iCurrentCursor;
+    uniform vec4 iPreviousCursor;
+    uniform vec4 iCurrentCursorColor;
+    uniform vec4 iPreviousCursorColor;
+    uniform float iTimeCursorChange;
+};
+layout(location = 0) out vec4 _fragColor;
+EOF
+cat > footer.glsl <<'EOF'
+void main() { mainImage(_fragColor, gl_FragCoord.xy); }
+EOF
+cat header.glsl /path/to/repo/ascii-face-status.glsl footer.glsl > test.frag
+glslang --target-env vulkan1.2 -S frag test.frag   # exit 0 = OK
+```
+
+There's no automated way to verify the GLSL against real Ghostty *rendering* (glslang only
+proves it compiles); changes affecting layout/orientation/timing should be sanity-checked with
+`misc/shader-preview.html` (reload the page before re-uploading an edited file — see above) and,
+when possible, called out to the user for a real-Ghostty check.
 
 ## Architecture
 
