@@ -4,7 +4,7 @@
 
 
 
-<video src="https://github.com/user-attachments/assets/a902d3a1-a015-4736-8700-56b43732fc9d" />
+<video src="https://github.com/user-attachments/assets/a902d3a1-a015-4736-8700-56b43732fc9d"></video>
 
 ## 仕組み
 
