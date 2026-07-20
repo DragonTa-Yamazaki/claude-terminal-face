@@ -29,6 +29,12 @@ suite. There is nothing to `npm install` or `npm run build`.
   coordinate convention (see below) — always test with this ON, since Chrome's native
   `gl_FragCoord` uses the opposite convention and will hide orientation bugs. Re-select the same
   file after editing it to recompile.
+  It also has a **"tweak" panel**: any global `const float` in the GLSL annotated with
+  `// @tweak <min> <max>` is rewritten into a `uniform` at load time and gets a live slider, so
+  "feels-good" values (brightness, face size, timing) can be found by eye instead of by
+  edit-save-reload. "diff を出力" prints a patch for the tuned values to fold back into the GLSL —
+  the GUI is an exploration tool, the constants stay the source of truth. Only annotate values
+  that are safe to move; never the decode key colors or `TOPDOWN_Y`.
 
 ### Compile-checking the GLSL with glslang (required before calling a shader change done)
 

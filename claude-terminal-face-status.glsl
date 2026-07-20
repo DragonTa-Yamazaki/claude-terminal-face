@@ -45,7 +45,12 @@
 //   cell = (618/1024*12, 1194/1024*12) [pt] * 2 [Retina] ≈ (14.5, 28.0) [px]。
 //   iResolution が物理 px か論理 px かはフォント/環境依存で変わるため実機で要検証。
 const vec2  CELL      = vec2(14.5, 28.0);
-const float FACE_SIZE = 0.62;              // 顔の大きさ（画面高に対する比）
+// `// @tweak <min> <max>` が付いたグローバル const float は misc/shader-preview.html が
+// uniform に差し替えてスライダー化する（実機 Ghostty には任意 uniform を渡す手段がなく、
+// プレビュー側のソース注入で実現している）。マーカーは Ghostty から見れば単なるコメント
+// なので実機挙動には影響しない。付けてよいのは「見た目・動きの気持ちよさ」を決める値だけ:
+// デコード用キー色や TOPDOWN_Y のような、触ると壊れる定数には付けないこと。
+const float FACE_SIZE = 0.62;              // @tweak 0.2 1.2  顔の大きさ（画面高に対する比）
 // --- 表示用ティント（顔の発光色）。状態重みで加重合成する。見やすさ優先の淡い彩色。
 //     デコード用キー（下）とは別物: キーはカーソル色サイドチャネルの分離最適化で
 //     RGB キューブ端に寄り暗くなりがちなため、発光色には流用しない（2026-07-18 分離）。
@@ -54,10 +59,10 @@ const vec3  THINK_TINT = vec3(0.94, 0.76, 0.29); // 考える顔（調査/プラ
 const vec3  WORK_TINT  = vec3(0.24, 0.44, 0.88); // 集中顔（実装中）
 const vec3  DONE_TINT  = vec3(0.55, 0.83, 0.28); // ドヤ顔（完了）
 const vec3  ERR_TINT   = vec3(0.95, 0.36, 0.42); // 失敗時
-const float GAIN      = 0.30;              // 明るさ。上げすぎると本文が読みにくい
-const float GAZE      = 0.07;              // 視線追従の強さ（0 で固定）
+const float GAIN      = 0.30;              // @tweak 0.0 1.0  明るさ。上げすぎると本文が読みにくい
+const float GAZE      = 0.07;              // @tweak 0.0 0.3  視線追従の強さ（0 で固定）
 const float CURSOR_Y_FLIP = 1.0;           // 視線が上下逆なら -1.0
-const float NOISE     = 0.05;
+const float NOISE     = 0.05;              // @tweak 0.0 0.2  セルごとの明度ゆらぎ
 // ---- Claude Code 連携: 状態デコード用キーパレットと距離判定のチューニング -----
 // カーソル色サイドチャネルで送られる 5 状態のキー色。claude-face-hook.sh の
 // IDLE/THINK/WORK/DONE/ERR（16進）および misc/palette-check.mjs と厳密に一致
@@ -176,8 +181,11 @@ vec2 faceDrift(float t) {
 
 // 呼吸フェーズ（0=呼気末 → 1=吸気末）。吸気(0〜0.32) → 息を止める(〜0.42) →
 // ゆっくり呼気(〜0.86) → 休止(〜1.0)。等速 sin だと機械のポンプに見える。
+// 周期はグローバル定数に切り出してある（@tweak 対象にするため。uniform 化は
+// グローバル宣言でしかできない）。3.6s は安静時呼吸のリズムに合わせた値。
+const float BREATH_PERIOD = 3.6; // @tweak 1.5 8.0  呼吸1周期の長さ（秒）
 float breathPhase(float t) {
-    float f = fract(t / 3.6);
+    float f = fract(t / BREATH_PERIOD);
     return smoothstep(0.0, 0.32, f) - smoothstep(0.42, 0.86, f);
 }
 
@@ -193,10 +201,14 @@ float breathPhase(float t) {
 vec2 gazeTarget(float i) {
     return (vec2(hash(vec2(i, 3.7)), hash(vec2(i, 9.1))) - 0.5) * vec2(0.16, 0.10);
 }
+// 固視区間の長さ（秒）。@tweak 対象にするため関数ローカルからグローバルへ移した
+// （uniform 化はグローバル宣言でしかできない）。
+const float GAZE_FIX_PERIOD = 2.3; // @tweak 0.8 6.0
 vec2 gazeWander(float t) {
-    const float P = 2.3;  // 固視区間の長さ（秒）
-    float i  = floor(t / P);
-    float f  = fract(t / P);
+    // P への別名付けはしない: `const float P = GAZE_FIX_PERIOD;` はプレビューが
+    // GAZE_FIX_PERIOD を uniform に差し替えた時点で定数式でなくなり、コンパイルが割れる。
+    float i  = floor(t / GAZE_FIX_PERIOD);
+    float f  = fract(t / GAZE_FIX_PERIOD);
     float at = 0.15 + hash(vec2(i, 5.3)) * 0.55;  // 区間内の移動開始タイミング
     float m  = smoothstep(at, at + 0.22, f);      // 0.22 * 2.3s ≈ 0.5s かけて移動
     // 第2項は固視微動: 固視中も完全静止させない。振幅 0.006 は目の
@@ -259,10 +271,12 @@ float glyphPixel(int bits, vec2 cellUV) {
 // DONE_*: 元は done のウィンクのタイムラインだったが、ウィンク廃止後も
 // キラキラ（doneDecoLum）の「溜め → バースト → 消灯」のリズムとして存続。
 // 値を変えるときは doneDecoLum の t1/t2 の組み立てを参照。
-const float DONE_PERIOD   = 3.2;  // 1周期の長さ
-const float DONE_CLOSE_AT = 0.35; // バースト前の溜め（旧: 閉じ始め）
-const float DONE_CLOSE    = 0.14; // 溜めの長さ（旧: 閉じ時間）
-const float DONE_HOLD     = 0.55; // バースト持続（旧: 閉じ保持）
+const float DONE_PERIOD   = 3.2;  // @tweak 1.0 8.0   1周期の長さ
+const float DONE_CLOSE_AT = 0.35; // @tweak 0.0 0.8   バースト前の溜め（旧: 閉じ始め）
+const float DONE_CLOSE    = 0.14; // @tweak 0.02 0.5  溜めの長さ（旧: 閉じ時間）
+const float DONE_HOLD     = 0.55; // @tweak 0.1 1.5   バースト持続（旧: 閉じ保持）
+// DONE_OPEN は現在どこからも参照されていないため @tweak を付けない（スライダーが
+// 何も動かさないと「効かない値」と誤認される）。
 const float DONE_OPEN     = 0.55; // 旧: 開き時間（現在はタイムライン互換のため残置）
 float errEyes(vec2 p, vec2 g) {
     return min(slitEye(p, -1.0, g, -0.38), slitEye(p, 1.0, g, -0.38));
@@ -300,8 +314,8 @@ float errMouth(vec2 p) {
 //   - 各フェーズの雰囲気（idle=穏やか/think=思案/work=奮闘/done=得意）から
 //     外れない範囲で振れ幅を作る。フェーズ判別が表情バリアントで曖昧に
 //     ならないよう、色とデコレーション（?/汗/キラキラ）は全バリアント共通。
-const float VAR_PERIOD = 7.0;   // 1 表情の保持時間（秒）
-const float VAR_MORPH  = 0.09;  // 区間頭の morph 割合（≈0.63s）
+const float VAR_PERIOD = 7.0;   // @tweak 2.0 20.0  1 表情の保持時間（秒）
+const float VAR_MORPH  = 0.09;  // @tweak 0.01 0.4  区間頭の morph 割合（≈0.63s）
 
 float pickVar(float i, float seed) { return floor(hash(vec2(i, seed)) * 3.0); }
 
@@ -458,11 +472,13 @@ float sdQuestion(vec2 p) {
 
 // thinking: 頭上に「?」を浮かべ、一定周期で左右にスライドさせる。
 // 各周期の前半 35% で反対側へ移動し、残りは静止して上下に揺れる。
-const float QM_PERIOD = 2.8;   // 左右スライドの周期（秒）
-const float QM_MOVE   = 0.35;  // 周期のうち移動に使う割合
+const float QM_PERIOD = 2.8;   // @tweak 1.0 8.0    左右スライドの周期（秒）
+const float QM_MOVE   = 0.35;  // @tweak 0.05 0.95  周期のうち移動に使う割合
 // 静止位置の振幅（顔空間）。backInOut の沈み込み/行き過ぎ（移動量の約10%）込みで
 // 最大到達 ≈ ±0.27 となり、目(±0.46)のブルームと重ならない従来の検証済み範囲に収まる。
-const float QM_SWING  = 0.225;
+// @tweak の上限 0.32 はこの検証済み範囲の目安。超える値を採用するなら目のブルームと
+// 重ならないか実機で確認すること。
+const float QM_SWING  = 0.225; // @tweak 0.0 0.32
 
 // 「?」の中心位置。t の純関数として切り出し、傾き計算（有限差分）から再利用する。
 // x: backInOut で「一瞬逆へ沈む（アンティシペーション）→ 滑り出す → 行き過ぎて

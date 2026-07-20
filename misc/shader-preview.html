@@ -4,84 +4,155 @@
 <meta charset="utf-8">
 <title>claude-terminal-face shader preview</title>
 <style>
-  body { background:#111; color:#eee; font-family:monospace; padding: 8px; }
-  canvas { background:#000; border:1px solid #444; image-rendering:pixelated; }
-  .row { margin: 6px 0; display: flex; align-items: center; gap: 8px; }
-  .row label { min-width: 0; }
-  input[type=range] { width: 220px; }
-  #log { white-space: pre-wrap; color: #f88; }
-  #log.ok { color: #8f8; }
+  :root { color-scheme: dark; }
+  html, body { margin:0; padding:0; height:100%; background:#000; overflow:hidden; }
+  /* キャンバスは fixed で全画面。CSS ピクセルサイズ = ウィンドウ、バッキング
+     ストアは pixelRatio 倍（シェーダーの CELL は device px 前提のため）。 */
+  #c { position:fixed; inset:0; width:100vw; height:100vh; display:block; background:#000; }
+
+  /* three.js の lil-gui 風パネル（依存を増やしたくないので手書き） */
+  #gui {
+    position:fixed; top:0; right:0; width:290px; max-height:100vh; overflow-y:auto;
+    font:11px/1.5 ui-monospace, Menlo, monospace; color:#ebebeb;
+    background:#1a1a1a; border-left:1px solid #2c2c2c; z-index:10;
+    user-select:none;
+  }
+  #gui.closed .body { display:none; }
+  #gui .title {
+    padding:6px 10px; background:#111; border-bottom:1px solid #2c2c2c;
+    cursor:pointer; font-weight:bold; letter-spacing:.02em;
+  }
+  #gui .title::before { content:'▾ '; }
+  #gui.closed .title::before { content:'▸ '; }
+  #gui .folder { border-bottom:1px solid #2c2c2c; padding:2px 0; }
+  #gui .folder > h4 { margin:0; padding:5px 10px; font-size:10px; color:#8a8a8a; text-transform:uppercase; letter-spacing:.08em; }
+  #gui .row { display:flex; align-items:center; gap:8px; padding:3px 10px; min-height:22px; }
+  #gui .row > .name { flex:0 0 96px; color:#bdbdbd; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #gui .row > .ctl { flex:1 1 auto; display:flex; align-items:center; gap:6px; min-width:0; }
+  #gui .row .val { flex:0 0 38px; text-align:right; color:#2cc9a5; font-variant-numeric:tabular-nums; }
+  #gui input[type=range] { flex:1 1 auto; min-width:0; accent-color:#2cc9a5; height:14px; }
+  #gui select, #gui input[type=file] { flex:1 1 auto; min-width:0; background:#2c2c2c; color:#ebebeb; border:1px solid #3c3c3c; border-radius:2px; padding:2px 4px; font:inherit; }
+  #gui input[type=checkbox] { accent-color:#2cc9a5; }
+  #gui button { background:#2c2c2c; color:#ebebeb; border:1px solid #3c3c3c; border-radius:2px; padding:3px 8px; font:inherit; cursor:pointer; }
+  #gui button:hover { background:#383838; }
+  #gui .note { padding:2px 10px 6px; color:#7a7a7a; }
+  #log { padding:6px 10px; white-space:pre-wrap; color:#ff7a7a; border-top:1px solid #2c2c2c; font-size:10px; }
+  #log.ok { color:#7ad97a; }
+  #hud {
+    position:fixed; left:8px; bottom:6px; z-index:10; pointer-events:none;
+    font:10px/1.4 ui-monospace, Menlo, monospace; color:#6a6a6a;
+  }
 </style>
 </head>
 <body>
-<h3 style="margin:4px 0 12px">claude-terminal-face shader preview</h3>
+<canvas id="c"></canvas>
 
-<div class="row">
-  <label>shader file: <input id="file" type="file" accept=".glsl,.frag,.txt"></label>
-  <span id="fileName" style="opacity:.6"></span>
-</div>
-<div class="row">
-  since (last cursor change, sec): <input id="since" type="range" min="0" max="30" step="0.1" value="1"> <span id="sinceVal"></span>
-</div>
-<div class="row">
-  prev state: <select id="prevState">
-    <option value="idle">idle</option>
-    <option value="thinking">thinking（考える）</option>
-    <option value="working">working（集中）</option>
-    <option value="done">done（ドヤ）</option>
-    <option value="err">err（困り）</option>
-  </select>
-  current state: <select id="curState">
-    <option value="idle">idle</option>
-    <option value="thinking">thinking（考える）</option>
-    <option value="working">working（集中）</option>
-    <option value="done">done（ドヤ）</option>
-    <option value="err">err（困り）</option>
-  </select>
-  <span style="opacity:.6">since が RAMP_SEC(1.26s) 未満だと prev→current のランプ中の中間色として見える</span>
-</div>
-<div class="row">
-  gaze x: <input id="gx" type="range" min="-1" max="1" step="0.01" value="0">
-  gaze y: <input id="gy" type="range" min="-1" max="1" step="0.01" value="0">
-</div>
-<div class="row">
-  <label><input id="ghosttyFlip" type="checkbox" checked> Ghostty simulation (fragCoord.y は上原点・下向き正)</label>
-</div>
-<div class="row">
-  <label><input id="live" type="checkbox"> live (iTime を実時間で進める。カーソルはキャンバス上のマウス位置)</label>
+<div id="gui">
+  <div class="title" id="guiTitle">claude-terminal-face preview</div>
+  <div class="body">
+    <div class="folder">
+      <h4>shader</h4>
+      <div class="row"><span class="name">file</span><span class="ctl"><input id="file" type="file" accept=".glsl,.frag,.txt"></span></div>
+      <div class="row"><span class="name">reload</span><span class="ctl"><button id="reload" disabled>再読み込み</button><span id="fileName" style="opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span></span></div>
+      <div class="note">同じファイルを選び直しても再コンパイルされる（value を毎回クリアしている）。編集後は「再読み込み」でも可。</div>
+    </div>
+
+    <div class="folder">
+      <h4>state (cursor color side channel)</h4>
+      <div class="row"><span class="name">prev state</span><span class="ctl"><select id="prevState"></select></span></div>
+      <div class="row"><span class="name">current state</span><span class="ctl"><select id="curState"></select></span></div>
+      <div class="row"><span class="name">ramp t</span><span class="ctl"><input id="ramp" type="range" min="0" max="1.26" step="0.01" value="1.26"><span class="val" id="rampVal"></span></span></div>
+      <div class="row"><span class="name"></span><span class="ctl"><button id="rampPlay">▶ ランプ再生</button></span></div>
+      <div class="note">ramp t は hook（claude-face-ramp.sh）が prev→current の色を送り終えるまでの秒数（RAMP_SEC=1.26s）。0 で prev 色、1.26 で current 色。シェーダーは iCurrentCursorColor だけを見るので、ここで中間色を合成して実機の見え方を再現する。</div>
+      <div class="row"><span class="name">variant lock</span><span class="ctl"><select id="varLock">
+        <option value="-1">auto (VAR_PERIOD=7s で巡回)</option>
+        <option value="0">variant 0</option>
+        <option value="1">variant 1</option>
+        <option value="2">variant 2</option>
+      </select></span></div>
+      <div class="note">各フェーズが持つ 3 表情のうち 1 つに固定する（呼吸・ドリフト・瞬き等の動きはそのまま）。ロード時に pickVar() の定義を差し替えて実現しているので、実機のシェーダーには影響しない。err はバリアントを持たないので無影響。</div>
+    </div>
+
+    <div class="folder" id="tweakFolder" style="display:none">
+      <h4>tweak (@tweak 定数)</h4>
+      <div id="tweakRows"></div>
+      <div class="row"><span class="name"></span><span class="ctl"><button id="tweakReset">初期値へ戻す</button><button id="tweakDiff">diff を出力</button></span></div>
+      <div class="note">シェーダー内で <code>// @tweak &lt;min&gt; &lt;max&gt;</code> が付いた const float を uniform 化して直接触る。気持ちいい値が決まったら「diff を出力」でコンソールに patch を出し、GLSL 本体へ反映する（GUI は探索用で本番機能ではない）。</div>
+    </div>
+
+    <div class="folder">
+      <h4>gaze (iCurrentCursor)</h4>
+      <div class="row"><span class="name">follow mouse</span><span class="ctl"><input id="followMouse" type="checkbox"></span></div>
+      <div class="row"><span class="name">gaze x</span><span class="ctl"><input id="gx" type="range" min="-1" max="1" step="0.01" value="0"><span class="val" id="gxVal"></span></span></div>
+      <div class="row"><span class="name">gaze y (+下)</span><span class="ctl"><input id="gy" type="range" min="-1" max="1" step="0.01" value="0"><span class="val" id="gyVal"></span></span></div>
+    </div>
+
+    <div class="folder">
+      <h4>render</h4>
+      <div class="row"><span class="name">ghostty y-flip</span><span class="ctl"><input id="ghosttyFlip" type="checkbox" checked></span></div>
+      <div class="note">ON = Ghostty の実挙動（fragCoord.y が上原点・下向き正）。ブラウザ標準は逆なので、常に ON で確認すること。</div>
+      <div class="row"><span class="name">pixel ratio</span><span class="ctl"><select id="dpr">
+        <option value="auto">auto (device)</option>
+        <option value="2">2 (Retina 実機相当)</option>
+        <option value="1">1</option>
+      </select></span></div>
+      <div class="note">CELL=(14.5,28.0) は device px 前提（Retina 2x で算出）。文字の見かけの大きさは pixel ratio に依存する。</div>
+      <div class="row"><span class="name">time</span><span class="ctl"><input id="pause" type="checkbox"> <label for="pause">pause</label> <button id="resetTime">iTime=0</button></span></div>
+    </div>
+
+    <div id="log">shader file を選択してください</div>
+  </div>
 </div>
 
-<canvas id="c" width="540" height="504"></canvas>
-<div id="log">shader file を選択してください</div>
+<div id="hud"></div>
 
 <script>
 const canvas = document.getElementById('c');
-const gl = canvas.getContext('webgl2');
+const gl = canvas.getContext('webgl2', { alpha: false, antialias: false });
 const logEl = document.getElementById('log');
+const hudEl = document.getElementById('hud');
+const $ = id => document.getElementById(id);
 if (!gl) logEl.textContent = 'WebGL2 が使えません';
+
+const STATES = ['idle', 'thinking（考える）', 'working（集中）', 'done（ドヤ）', 'err（困り）'];
+const STATE_KEYS = ['idle', 'thinking', 'working', 'done', 'err'];
+for (const sel of [$('prevState'), $('curState')]) {
+  STATE_KEYS.forEach((k, i) => sel.add(new Option(STATES[i], k)));
+}
+$('prevState').value = 'idle';
+$('curState').value = 'thinking';
 
 const vsSrc = `#version 300 es
 in vec2 aPos;
 void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 `;
 
+// Ghostty が実際に供給する uniform 一式（型も合わせる）。iCurrentCursor /
+// iPreviousCursor は Ghostty では vec4(x, y, w, h) なので、vec2 で宣言すると
+// .zw を読むシェーダーがプレビューだけコンパイル通らなくなる。使っていない
+// uniform も宣言だけしておき、実機との差異でコンパイルが割れないようにする。
 function buildFsSrc(shaderBody) {
   return `#version 300 es
 precision highp float;
 precision highp int;
-uniform vec2 iResolution;
+uniform vec3 iResolution;
 uniform float iTime;
 uniform float iTimeDelta;
+uniform float iFrameRate;
+uniform int iFrame;
+uniform vec4 iMouse;
+uniform vec4 iDate;
 uniform sampler2D iChannel0;
-uniform vec2 iCurrentCursor;
-uniform vec2 iPreviousCursor;
-uniform float iTimeCursorChange;
+uniform vec4 iCurrentCursor;
+uniform vec4 iPreviousCursor;
 uniform vec4 iCurrentCursorColor;
 uniform vec4 iPreviousCursorColor;
+uniform float iTimeCursorChange;
 uniform float uGhosttyFlip; // 1.0 = Ghostty の実挙動（fragCoord.y が上原点・下向き正）を再現
+uniform float uVarLock;     // <0 = シェーダー本来の巡回、0/1/2 = そのバリアントに固定
 out vec4 outColor;
 
-${shaderBody}
+${patchTweaks(patchVariantLock(shaderBody))}
 
 void main() {
   vec4 col;
@@ -92,6 +163,109 @@ void main() {
 }
 `;
 }
+
+// フェーズ内の 3 表情は pickVar() だけが選んでいる（idle/think/work/done は
+// seed 違いで同じ関数を呼ぶ）ので、その 1 関数を差し替えれば全フェーズを一律に
+// 固定できる。Ghostty のカスタムシェーダーには任意の uniform を渡す手段がなく、
+// シェーダー本体にデバッグ用スイッチを足すことはできないため、プレビュー側で
+// ロード時にソースへ注入する。定義行が変わったら（1 行完結でなくなった等）
+// マッチしなくなるので、その場合は黙って無効化せず UI で知らせる。
+const PICKVAR_RE = /^([ \t]*)float\s+pickVar\s*\(\s*float\s+(\w+)\s*,\s*float\s+(\w+)\s*\)\s*\{(.*)\}[ \t]*$/m;
+let varLockPatched = false;
+function patchVariantLock(src) {
+  varLockPatched = PICKVAR_RE.test(src);
+  return src.replace(PICKVAR_RE, (_m, indent, a, b, body) =>
+    `${indent}float pickVarAuto_(float ${a}, float ${b}) {${body}}\n` +
+    `${indent}float pickVar(float ${a}, float ${b}) { return uVarLock < 0.0 ? pickVarAuto_(${a}, ${b}) : uVarLock; }`);
+}
+
+// ---- @tweak: 定数を uniform に差し替えてスライダー化 -------------------------
+// 着想元: 「AIエージェントで"表現"を実装する」(2026-05-27)
+//   https://x.com/tkm_hmng8/status/2059453301322825853
+//   要点 = Tweak-Driven: duration/easing/scale のような「気持ちいい値」は文章で
+//   指定しても決まらないので、開発環境だけに調整 GUI を置いて人間が画面を見ながら
+//   探し、見つかった値は typed config / constants へ反映する。美的判断は人間、
+//   保存・反映・再現・整理はエージェント、という分担にするのが肝。
+// この仕組みはその GUI 側にあたる。Ghostty のカスタム
+// シェーダーには任意 uniform を渡せないので、pickVar と同じくロード時のソース注入で
+// 実現する。マーカーは実機から見れば単なるコメントなので本番挙動には影響しない。
+//
+// 全 const を機械的に uniform 化しない理由（2026-07-20 に検討して却下）:
+//   - 関数内ローカルの const（faceField 内の P / SCALE 等）は uniform 化できない
+//     （uniform はグローバル宣言のみ）。巻き上げが要りコストに見合わない。
+//   - *_KEY（デコード用キー色）や TOPDOWN_Y のような「触ると壊れる定数」まで
+//     スライダーに出てしまう。opt-in なら出る値をシェーダー側で選べる。
+// 逆に、プレビュー側に対象リストを持つ案も却下した（GLSL との二重管理が増える。
+// docs/SPEC.md §7.4 と同種の問題）。マーカーが単一の情報源。
+// 末尾の `.*$` は必須。マーカーの後ろに説明コメントが続くのが通常なので、これを
+// 食わないと差し替え後にコメント本文が裸の識別子として残りコンパイルが割れる。
+const TWEAK_RE = /^[ \t]*const\s+float\s+(\w+)\s*=\s*([^;]*);[ \t]*\/\/[ \t]*@tweak[ \t]+(-?[\d.]+)[ \t]+(-?[\d.]+).*$/gm;
+let tweaks = []; // {name, def, min, max, line, value}
+
+function patchTweaks(src) {
+  tweaks = [];
+  const patched = src.replace(TWEAK_RE, (line, name, init, min, max) => {
+    const def = parseFloat(init);
+    // 初期化式がリテラルでない（式や関数呼び出し）ものは diff を機械生成できない
+    // ので触らない。マーカーの付け方が誤っているケースなので UI で知らせる。
+    if (!isFinite(def)) return line;
+    tweaks.push({ name, def, min: parseFloat(min), max: parseFloat(max), line, value: def });
+    return `uniform float ${name};`;
+  });
+  buildTweakRows();
+  return patched;
+}
+
+function buildTweakRows() {
+  const host = $('tweakRows');
+  host.textContent = '';
+  $('tweakFolder').style.display = tweaks.length ? '' : 'none';
+  for (const t of tweaks) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    // step="any" は必須。固定 step にすると初期値がグリッドに吸着してズレ、
+    // (1) 触っていないのにシェーダー本体と違う値で描画される
+    // (2) 未変更の定数が diff に現れる
+    // という二重の事故になる（2026-07-20: GAZE=0.07 が step 0.0015 で 0.0705 に
+    // 吸着して発覚）。連続値でも探索に支障はない。
+    row.innerHTML = `<span class="name" title="${t.name}">${t.name}</span>`
+      + `<span class="ctl"><input type="range" min="${t.min}" max="${t.max}" step="any" value="${t.def}">`
+      + `<span class="val"></span></span>`;
+    const input = row.querySelector('input');
+    const val = row.querySelector('.val');
+    // step="any" は端数の多い値を返すので、表示・反映用に 4 桁へ丸めてから採用する
+    // （シェーダーへ渡す値と diff に書く値を一致させるため、丸めは sync 側で行う）。
+    const sync = () => {
+      t.value = parseFloat(parseFloat(input.value).toFixed(4));
+      val.textContent = t.value.toFixed(3);
+    };
+    input.addEventListener('input', sync);
+    t.reset = () => { input.value = t.def; sync(); };
+    sync();
+    host.appendChild(row);
+  }
+}
+
+function tweakDiff() {
+  const changed = tweaks.filter(t => t.value !== t.def);
+  if (!changed.length) return '（変更なし）';
+  return changed.map(t => {
+    // 元行の「= <値>;」だけを差し替える。整列やコメントはそのまま残す。
+    // 整数値でも必ず小数点を付ける（`float x = 6;` は処理系によって通らない。
+    // 貼り戻した patch がコンパイルできないのは diff 出力として役に立たない）。
+    const lit = Number.isInteger(t.value) ? t.value.toFixed(1) : String(t.value);
+    const next = t.line.replace(/=\s*[^;]*;/, `= ${lit};`);
+    return `- ${t.line.trim()}\n+ ${next.trim()}`;
+  }).join('\n');
+}
+
+$('tweakReset').addEventListener('click', () => tweaks.forEach(t => t.reset()));
+$('tweakDiff').addEventListener('click', () => {
+  const d = tweakDiff();
+  console.log('[shader-preview] tweak diff\n' + d);
+  logEl.textContent = d;
+  logEl.className = 'ok';
+});
 
 function compile(type, src) {
   const s = gl.createShader(type);
@@ -116,12 +290,17 @@ gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
+const UNIFORM_NAMES = ['iResolution','iTime','iTimeDelta','iFrameRate','iFrame','iMouse','iDate',
+  'iChannel0','iCurrentCursor','iPreviousCursor','iCurrentCursorColor','iPreviousCursorColor',
+  'iTimeCursorChange','uGhosttyFlip','uVarLock'];
+
 let prog = null;
 let uniforms = {};
-let startedAt = null;
-let mouse = { x: 0.5, y: 0.5 }; // 0..1, canvas-local
+let mouse = { x: 0.5, y: 0.5 }; // 0..1, canvas-local (y は下向き)
+let lastSource = null;
 
 function setShaderSource(src) {
+  lastSource = src;
   try {
     const fsSrc = buildFsSrc(src);
     const vs = compile(gl.VERTEX_SHADER, vsSrc);
@@ -133,19 +312,24 @@ function setShaderSource(src) {
     if (!gl.getProgramParameter(newProg, gl.LINK_STATUS)) {
       throw new Error(gl.getProgramInfoLog(newProg));
     }
+    if (prog) gl.deleteProgram(prog);
     prog = newProg;
     gl.useProgram(prog);
     const aPos = gl.getAttribLocation(prog, 'aPos');
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
     uniforms = {};
-    ['iResolution','iTime','iTimeDelta','iChannel0','iCurrentCursor','iPreviousCursor',
-     'iTimeCursorChange','iCurrentCursorColor','iPreviousCursorColor','uGhosttyFlip'
-    ].forEach(n => uniforms[n] = gl.getUniformLocation(prog, n));
-    logEl.textContent = 'compiled OK';
+    UNIFORM_NAMES.concat(tweaks.map(t => t.name))
+      .forEach(n => uniforms[n] = gl.getUniformLocation(prog, n));
+    logEl.textContent = 'compiled OK'
+      + (varLockPatched ? '' : ' (pickVar() が見つからず variant lock は無効)')
+      + (tweaks.length ? ` / @tweak ${tweaks.length} 件` : '');
     logEl.className = 'ok';
-    render();
+    $('varLock').disabled = !varLockPatched;
   } catch (e) {
+    // コンパイルに失敗したら描画も止める。旧プログラムを描き続けると
+    // 「直したつもりが古い絵を見ていた」事故になる（CLAUDE.md の既知の罠）。
+    prog = null;
     logEl.textContent = 'COMPILE/LINK ERROR:\n' + e.message;
     logEl.className = '';
   }
@@ -163,8 +347,8 @@ const PALETTE = {
   err:      [0xe0/255, 0x00/255, 0x00/255, 1.0],
 };
 // hook（claude-face-ramp.sh）が旧キー→新キーを送る所要時間（head+body+tail の合計）。
-// シェーダーはもう iPreviousCursorColor をイージングしないので、遷移の
-// スムースさはこのランプが供給する。プレビューでは since をこの軸に見立てて
+// シェーダーはもう iPreviousCursorColor / iTimeCursorChange を見ないので、遷移の
+// スムースさはこのランプが供給する。プレビューでは ramp t をその軸に見立てて
 // iCurrentCursorColor 自体を prev→current に補間し、実機の見え方を再現する。
 const RAMP_SEC = 1.26;
 // 2026-07-20: 線分上の位置 s は等速ではなく、シェーダーの softmax デコードを
@@ -187,64 +371,126 @@ function rampPos(t, prev, cur) {
   return 0.5 + logit(w) / (2 * K);
 }
 
-function render() {
-  if (!prog) return;
-  const since = parseFloat(document.getElementById('since').value);
-  const live = document.getElementById('live').checked;
-  document.getElementById('sinceVal').textContent = since.toFixed(1);
+function pixelRatio() {
+  const v = $('dpr').value;
+  return v === 'auto' ? (window.devicePixelRatio || 1) : parseFloat(v);
+}
 
-  let iTime, iTimeCursorChange, cx, cy;
-  if (live) {
-    if (startedAt === null) startedAt = performance.now();
-    iTime = (performance.now() - startedAt) / 1000;
-    iTimeCursorChange = iTime - since;
-    cx = mouse.x * canvas.width;
-    cy = (1.0 - mouse.y) * canvas.height; // canvas mouse y-down -> pass through as-is; flip handled by uGhosttyFlip in shader math is for fragCoord only
-  } else {
-    const gx = parseFloat(document.getElementById('gx').value);
-    const gy = parseFloat(document.getElementById('gy').value);
-    iTime = since + 5.0;
-    iTimeCursorChange = iTime - since;
-    cx = (gx * 0.5 + 0.5) * canvas.width;
-    cy = (gy * 0.5 + 0.5) * canvas.height;
+function resize() {
+  const pr = pixelRatio();
+  const w = Math.max(1, Math.round(window.innerWidth * pr));
+  const h = Math.max(1, Math.round(window.innerHeight * pr));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+}
+
+// 顔は常に生体モーション（faceDrift/breathPhase/gazeWander）で動くので、
+// iTime は常時進める。pause はそれを凍結して 1 フレームを観察するためのもの。
+let clock = 0, lastNow = performance.now(), frame = 0, dt = 1 / 60;
+let rampPlayStart = null;
+
+function tick(now) {
+  dt = Math.min((now - lastNow) / 1000, 0.1);
+  lastNow = now;
+  if (!$('pause').checked) clock += dt;
+
+  if (rampPlayStart !== null) {
+    const t = (now - rampPlayStart) / 1000;
+    $('ramp').value = Math.min(t, RAMP_SEC).toFixed(2);
+    if (t >= RAMP_SEC) { rampPlayStart = null; $('rampPlay').textContent = '▶ ランプ再生'; }
   }
 
-  gl.viewport(0, 0, canvas.width, canvas.height);
+  resize();
+  render();
+  requestAnimationFrame(tick);
+}
+
+function render() {
+  const ramp = parseFloat($('ramp').value);
+  const gx = parseFloat($('gx').value);
+  const gy = parseFloat($('gy').value);
+  $('rampVal').textContent = ramp.toFixed(2);
+  $('gxVal').textContent = gx.toFixed(2);
+  $('gyVal').textContent = gy.toFixed(2);
+
+  const W = canvas.width, H = canvas.height;
+  let cx, cy;
+  if ($('followMouse').checked) {
+    cx = mouse.x * W;
+    cy = mouse.y * H; // iCurrentCursor は Ghostty でも上原点なのでマウス座標をそのまま渡す
+  } else {
+    cx = (gx * 0.5 + 0.5) * W;
+    cy = (gy * 0.5 + 0.5) * H;
+  }
+
+  const vl = parseFloat($('varLock').value);
+  hudEl.textContent = `${W}x${H} px (ratio ${pixelRatio()})  iTime=${clock.toFixed(2)}`
+    + `  ramp=${ramp.toFixed(2)}/${RAMP_SEC}  variant=${vl < 0 ? 'auto' : vl}`;
+
+  if (!prog) return;
+
+  gl.viewport(0, 0, W, H);
   gl.useProgram(prog);
-  gl.uniform2f(uniforms.iResolution, canvas.width, canvas.height);
-  gl.uniform1f(uniforms.iTime, iTime);
-  gl.uniform1f(uniforms.iTimeDelta, 0.016);
+  gl.uniform3f(uniforms.iResolution, W, H, 1.0);
+  gl.uniform1f(uniforms.iTime, clock);
+  gl.uniform1f(uniforms.iTimeDelta, dt);
+  gl.uniform1f(uniforms.iFrameRate, 1 / Math.max(dt, 1e-4));
+  gl.uniform1i(uniforms.iFrame, frame++);
+  gl.uniform4f(uniforms.iMouse, mouse.x * W, mouse.y * H, 0, 0);
+  const d = new Date();
+  gl.uniform4f(uniforms.iDate, d.getFullYear(), d.getMonth(), d.getDate(),
+    d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds());
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.uniform1i(uniforms.iChannel0, 0);
-  gl.uniform2f(uniforms.iCurrentCursor, cx, cy);
-  gl.uniform2f(uniforms.iPreviousCursor, cx, cy);
-  gl.uniform1f(uniforms.iTimeCursorChange, iTimeCursorChange);
+  gl.uniform4f(uniforms.iCurrentCursor, cx, cy, 1.0, 1.0);
+  gl.uniform4f(uniforms.iPreviousCursor, cx, cy, 1.0, 1.0);
+  // シェーダーはもう参照しないが、Ghostty が供給する以上は値を入れておく
+  // （ramp t の分だけ過去に色が変わった、という辻褄で渡す）。
+  gl.uniform1f(uniforms.iTimeCursorChange, clock - ramp);
 
   // 実機の hook は prev→current を RAMP_SEC かけて送る。プレビューはその中間色を
-  // since から再現して iCurrentCursorColor に入れる（シェーダーはこれを直接
-  // デコードする。iPreviousCursorColor はもう使われないが uniform は残す）。
-  // 位置の決め方は rampPos() を claude-face-ramp.sh と一致させること。
-  const prevCol = PALETTE[document.getElementById('prevState').value];
-  const curCol = PALETTE[document.getElementById('curState').value];
-  const rt = rampPos(Math.min(since / RAMP_SEC, 1.0), prevCol, curCol);
+  // ramp t から再現して iCurrentCursorColor に入れる（シェーダーはこれを直接
+  // デコードする）。位置の決め方は rampPos() を claude-face-ramp.sh と一致させること。
+  const prevCol = PALETTE[$('prevState').value];
+  const curCol = PALETTE[$('curState').value];
+  const rt = rampPos(Math.min(ramp / RAMP_SEC, 1.0), prevCol, curCol);
   const cc = curCol.map((v, i) => prevCol[i] + (v - prevCol[i]) * rt);
   gl.uniform4f(uniforms.iCurrentCursorColor, cc[0], cc[1], cc[2], cc[3]);
   gl.uniform4f(uniforms.iPreviousCursorColor, prevCol[0], prevCol[1], prevCol[2], prevCol[3]);
-  gl.uniform1f(uniforms.uGhosttyFlip, document.getElementById('ghosttyFlip').checked ? 1.0 : 0.0);
+  gl.uniform1f(uniforms.uGhosttyFlip, $('ghosttyFlip').checked ? 1.0 : 0.0);
+  gl.uniform1f(uniforms.uVarLock, parseFloat($('varLock').value));
+  for (const t of tweaks) gl.uniform1f(uniforms[t.name], t.value);
 
   gl.drawArrays(gl.TRIANGLES, 0, 3);
-
-  if (live) requestAnimationFrame(render);
 }
 
-document.getElementById('file').addEventListener('change', (ev) => {
-  const f = ev.target.files[0];
+let currentFile = null;
+function loadFile(f) {
   if (!f) return;
-  document.getElementById('fileName').textContent = f.name;
+  currentFile = f;
+  $('fileName').textContent = f.name;
+  $('reload').disabled = false;
   const reader = new FileReader();
   reader.onload = () => setShaderSource(reader.result);
   reader.readAsText(f);
+}
+
+$('file').addEventListener('change', (ev) => {
+  loadFile(ev.target.files[0]);
+  // 同じファイルを選び直しても change が発火するようにクリアする。
+  // これがないと「編集 → 選び直したのに古いプログラムのまま」になる。
+  ev.target.value = '';
+});
+// File オブジェクトは参照時にディスクから読み直されるので、編集後の再読込に使える。
+$('reload').addEventListener('click', () => loadFile(currentFile));
+
+document.addEventListener('dragover', ev => ev.preventDefault());
+document.addEventListener('drop', ev => {
+  ev.preventDefault();
+  loadFile(ev.dataTransfer.files[0]);
 });
 
 canvas.addEventListener('mousemove', (ev) => {
@@ -253,9 +499,16 @@ canvas.addEventListener('mousemove', (ev) => {
   mouse.y = (ev.clientY - r.top) / r.height;
 });
 
-['since','prevState','curState','gx','gy','ghosttyFlip'].forEach(id =>
-  document.getElementById(id).addEventListener('input', () => { if (!document.getElementById('live').checked) render(); }));
-document.getElementById('live').addEventListener('change', () => { startedAt = null; render(); });
+$('guiTitle').addEventListener('click', () => $('gui').classList.toggle('closed'));
+$('resetTime').addEventListener('click', () => { clock = 0; frame = 0; });
+$('rampPlay').addEventListener('click', () => {
+  if (rampPlayStart !== null) { rampPlayStart = null; $('rampPlay').textContent = '▶ ランプ再生'; return; }
+  rampPlayStart = performance.now();
+  $('rampPlay').textContent = '■ 停止';
+});
+window.addEventListener('resize', resize);
+
+requestAnimationFrame((t) => { lastNow = t; tick(t); });
 </script>
 </body>
 </html>
