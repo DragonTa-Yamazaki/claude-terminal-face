@@ -154,7 +154,7 @@ function setShaderSource(src) {
 // claude-terminal-face-status.glsl の IDLE_KEY/THINK_KEY/WORK_KEY/DONE_KEY/ERR_KEY
 // および claude-face-hook.sh のキー色（16進）と同じ値（デコード用キー。表示ティント
 // とは別物）。値を変えたらシェーダー・hook・misc/palette-check.mjs をすべて更新する
-// こと（spec.md §7.4 と同種の二重管理）。
+// こと（docs/SPEC.md §7.4 と同種の二重管理）。
 const PALETTE = {
   idle:     [0x5c/255, 0xe0/255, 0xc9/255, 1.0],
   thinking: [0xf7/255, 0xb8/255, 0x1f/255, 1.0],

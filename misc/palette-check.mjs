@@ -109,7 +109,7 @@ for (const n of names) {
 console.log("\n== gate 指標（シェーダーと同じ: 5アンカー + hook 6線分への最小距離二乗）==");
 // 上段: 未知のテーマ既定カーソル色の代表例。値 > STATE_GATE_HI なら完全に
 // idle フォールバック。gray/orange は hook 線分（think–work / think–err）の
-// ほぼ真上に乗るため gate できない = 既知の制限（spec.md §9.4）。
+// ほぼ真上に乗るため gate できない = 既知の制限（docs/SPEC.md §9.4）。
 // 下段: アニメーション中断→再開で通り得る内部点（hook 3状態の重心）。
 // これらは gate されない（値 < STATE_GATE_LO）ことが望ましい。
 const probes = {

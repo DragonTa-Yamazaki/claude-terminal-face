@@ -4,7 +4,7 @@
 #
 #  Claude Code の hook イベント（PreToolUse/PostToolUse/UserPromptSubmit/Stop）
 #  を受け取り、作業状態(idle/thinking/working/done/err)を OSC 12（カーソル色
-#  設定エスケープシーケンス）でシェーダー側に伝える。spec.md §9 参照。
+#  設定エスケープシーケンス）でシェーダー側に伝える。docs/SPEC.md §9 参照。
 #
 #  2026-07-18: 単発の色送信ではフェーズ間遷移がシェーダー側で一瞬にスナップして
 #  いた（原因はシェーダーが Ghostty のカーソル uniform に依存していたこと。
@@ -16,7 +16,7 @@
 #  読み取っており、端末には届かない。/dev/tty に直接書き込む必要がある
 #  （cli.js の spawn 実装をもとに確認済み）。
 #
-#  settings.json 登録例は spec.md §9 参照。stdin には hook の JSON payload
+#  settings.json 登録例は docs/SPEC.md §9 参照。stdin には hook の JSON payload
 #  が渡ってくる前提。
 # ============================================================================
 set -euo pipefail
@@ -29,7 +29,7 @@ set -euo pipefail
 # herdr（ターミナルマルチプレクサ）配下では、各 pane が内部で独自の仮想
 # 端末（libghostty-vt）を持つだけで OS レベルの制御端末を割り当てないため、
 # 祖先探索が「たまたま見つかった無関係な別セッションの TTY」に書き込んで
-# しまう恐れがある（実機確認済み、spec.md §9.8 参照）。祖先に herdr が
+# しまう恐れがある（実機確認済み、docs/SPEC.md §9.8 参照）。祖先に herdr が
 # いたら安全側に倒して諦める。
 find_tty() {
   local p="$PPID" t cmd
@@ -100,7 +100,7 @@ case "$event" in
   SessionStart)
     # /clear・/new・/reset で会話をリセットしたとき、前の done/err 顔が OSC 12 で
     # 持続したままになる（claude 実行中は外側シェルの precmd が発火せず idle に
-    # 戻せない。spec.md §9.3-4）。SessionStart を拾って idle に戻す。
+    # 戻せない。docs/SPEC.md §9.3-4）。SessionStart を拾って idle に戻す。
     # source は clear/startup/resume/compact のいずれか（compact も含め全般で idle。
     # ユーザー判断 2026-07-20）。/new・/reset の source 値は未確認だが、source で
     # 絞らないため確実に効く。

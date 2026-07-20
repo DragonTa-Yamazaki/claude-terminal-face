@@ -87,7 +87,7 @@ if [ "${1:-}" = "--animate" ]; then
 
   # bash の整数演算では logit（log）が計算できないので awk で色列を一括生成する。
   # STATE_SOFT はシェーダー側の定数の写し。片方だけ変えると遷移尺が狂う
-  # （spec.md §7.4 と同種の二重管理）。
+  # （docs/SPEC.md §7.4 と同種の二重管理）。
   colors="$(awk -v fr="$fr" -v fg="$fg" -v fb="$fb" \
                 -v tr="$tr" -v tg="$tg" -v tb="$tb" \
                 -v head="$head" -v body="$body" -v tail="$tail" '
