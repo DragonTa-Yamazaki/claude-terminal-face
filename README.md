@@ -2,8 +2,6 @@
 
 フィクション作品に見られる「機械的なボディ + 記号化された発光顔（ドットマトリクス / ASCII）」というモチーフをターミナルで再現+Claude Codeと連携させるプロトタイプ。
 
-
-
 <video src="https://github.com/user-attachments/assets/a902d3a1-a015-4736-8700-56b43732fc9d"></video>
 
 ## 仕組み
@@ -120,4 +118,14 @@ precmd_functions=(_claude_terminal_face_status $precmd_functions[@])
 
 - **[herdr](https://herdr.dev/) 経由では動作しない**。herdr は各 pane を内部の仮想端末（`libghostty-vt`）でシミュレートしており、pane 内から送った OSC 12 はその内部状態を変えるだけで外側の本物の Ghostty には伝播しない。また hook スクリプトに制御端末が割り当てられず、無関係な別セッションの TTY へ誤送信する恐れがあるため、`claude-face-hook.sh` は祖先プロセスに herdr を検出すると安全側に倒して何もしない。Ghostty 上で直接 `claude` を実行するセッションでのみ動作する（詳細は SPEC.md §9.8）。
 
+## Changelog
 
+### 2026-07-20
+
+- **フェーズ間のモーフィングを滑らかに**。表情の切り替わりが瞬時に飛ぶのではなく、SDF を補間しながら遷移するようになった。あわせて、カーソル色のデコードに使う状態キーと、画面に出す色味（ティント）を分離した。
+- **`/new` などのセッション開始時に `idle` へ戻す**。`SessionStart` フックで表情をリセットするようにし、前のセッションの終了状態（`done` や `err`）を引きずらなくなった。
+
+### ファーストリリース
+
+- Ghostty のカスタムシェーダーによる ASCII 顔の描画。
+- Claude Code hooks + OSC 12（カーソル色）をサイドチャネルにした状態連携。`idle` / `thinking` / `working` / `done` / `err` の 5 状態に対応。
