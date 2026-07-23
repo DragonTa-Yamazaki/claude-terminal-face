@@ -97,6 +97,14 @@ case "$event" in
   Stop)
     send "$DONE"
     ;;
+  SessionEnd)
+    # Claude セッション終了（exit・logout 等）でカーソル色をデフォルトに戻す。
+    # OSC 112（カーソル色リセット）を TTY に直接書く。素のカーソル色は
+    # claude-terminal-face-status.glsl の 5 キー色から遠い＝ gate されるため、
+    # 顔が透明化して消える（＝Claude 非利用時は off）。ランプ経由だと色を
+    # 送ってしまうので、ここは send() を使わず OSC 112 を直接送る。
+    printf '\033]112\007' > "$TTY" 2>/dev/null || true
+    ;;
   SessionStart)
     # /clear・/new・/reset で会話をリセットしたとき、前の done/err 顔が OSC 12 で
     # 持続したままになる（claude 実行中は外側シェルの precmd が発火せず idle に

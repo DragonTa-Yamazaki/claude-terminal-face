@@ -831,6 +831,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     if (wDoneS  > 0.004) v += wDoneS  * doneDecoLum(p, iTime);
     v *= 0.94 + 0.06 * sin(iTime * 8.0 + cellId.y * 0.9);
     v += (hash(cellId + floor(iTime * 12.0)) - 0.5) * NOISE;
+    // 「Claude 非利用時は顔を消す」。gate は既知キー色・遷移線分のいずれからも
+    // 遠い色（＝Claude が OSC 12 を出していない素のカーソル色）ほど 1.0 に近づく
+    // 距離指標。その色のときは顔全体（本体＋デコレーション＋ノイズ）を輝度ごと
+    // 打ち消して透明化する。セッション中は 5 キー色 or ランプ線分上にいて gate≈0
+    // なので通常描画のまま。フォールバックは idle 表示ではなく非表示になる。
+    v *= (1.0 - gate);
     v = clamp(v, 0.0, 1.0);
 
     int idx = int(clamp(floor(v * 10.0), 0.0, 9.0));
