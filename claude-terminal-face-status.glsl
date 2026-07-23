@@ -76,6 +76,14 @@ const vec3  THINK_KEY = vec3(0.969, 0.722, 0.122); // #f7b81f
 const vec3  WORK_KEY  = vec3(0.255, 0.255, 0.612); // #41419c
 const vec3  DONE_KEY  = vec3(0.039, 0.600, 0.000); // #0a9900
 const vec3  ERR_KEY   = vec3(0.878, 0.000, 0.000); // #e00000
+// OFF: Claude セッション外（＝素のシェル）のカーソル色。これに近いとき顔を消す。
+// ghostty の cursor-color に一致させること（既定は #7970A9）。この色は WORK(#41419c)
+// と近く（距離二乗 ~0.085）gate では弾けないため、専用キーで明示的に非表示にする。
+// OFF_LO/HI は「OFF_KEY のごく近傍だけ」を消すための狭い帯（real WORK は ~0.085 で
+// 十分外側なので誤って消えない）。cursor-color を変えたらこの値も合わせること。
+const vec3  OFF_KEY   = vec3(0.475, 0.439, 0.663); // #7970A9
+const float OFF_LO    = 0.010;
+const float OFF_HI    = 0.040;
 const float STATE_SOFT    = 0.03;  // 状態境界のシャープさ。小さいほど切替が急峻
 // gate: 既知キー色・遷移線分のいずれからも遠い色（未知テーマのカーソル色等）を
 // idle へフォールバックさせる距離二乗の帯。閾値は palette-check.mjs の gate 指標
@@ -831,12 +839,13 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     if (wDoneS  > 0.004) v += wDoneS  * doneDecoLum(p, iTime);
     v *= 0.94 + 0.06 * sin(iTime * 8.0 + cellId.y * 0.9);
     v += (hash(cellId + floor(iTime * 12.0)) - 0.5) * NOISE;
-    // 「Claude 非利用時は顔を消す」。gate は既知キー色・遷移線分のいずれからも
-    // 遠い色（＝Claude が OSC 12 を出していない素のカーソル色）ほど 1.0 に近づく
-    // 距離指標。その色のときは顔全体（本体＋デコレーション＋ノイズ）を輝度ごと
-    // 打ち消して透明化する。セッション中は 5 キー色 or ランプ線分上にいて gate≈0
-    // なので通常描画のまま。フォールバックは idle 表示ではなく非表示になる。
-    v *= (1.0 - gate);
+    // 「Claude 非利用時は顔を消す」。
+    //  gate: 既知キー色・遷移線分から遠い未知色（別テーマのカーソル色等）ほど 1.0。
+    //  off : 素のシェルのカーソル色 OFF_KEY のごく近傍のとき 1.0。
+    // どちらか一方でも立てば顔全体（本体＋デコレーション＋ノイズ）を輝度ごと打ち消す。
+    // セッション中は 5 キー色 or ランプ線分上にいて両方 0 なので通常描画のまま。
+    float off = 1.0 - smoothstep(OFF_LO, OFF_HI, distSq(cc, OFF_KEY));
+    v *= (1.0 - max(gate, off));
     v = clamp(v, 0.0, 1.0);
 
     int idx = int(clamp(floor(v * 10.0), 0.0, 9.0));
